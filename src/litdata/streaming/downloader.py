@@ -31,6 +31,7 @@ from litdata.constants import (
     _INDEX_FILENAME,
 )
 from litdata.streaming.client import S3Client
+from litdata.utilities.progress import ProgressMonitor
 
 
 class Downloader(ABC):
@@ -74,6 +75,8 @@ class S3Downloader(Downloader):
 
         if not self._s5cmd_available or _DISABLE_S5CMD:
             self._client = S3Client(storage_options=self._storage_options)
+
+        self._chunks_bytes = {chunk["filename"]: int(chunk["chunk_bytes"]) for chunk in self._chunks}
 
     def download_file(self, remote_filepath: str, local_filepath: str) -> None:
         obj = parse.urlparse(remote_filepath)
@@ -141,13 +144,19 @@ class S3Downloader(Downloader):
 
                 if not os.path.exists(local_filepath):
                     # Issue: https://github.com/boto/boto3/issues/3113
-                    self._client.client.download_file(
-                        obj.netloc,
-                        obj.path.lstrip("/"),
-                        local_filepath,
-                        ExtraArgs=extra_args,
-                        Config=TransferConfig(use_threads=False),
-                    )
+                    chunk_filename = os.path.basename(local_filepath)
+                    chunk_bytes = self._chunks_bytes.get(chunk_filename, 1)
+                    with ProgressMonitor(
+                        file_name=os.path.basename(local_filepath), total_bytes=chunk_bytes
+                    ) as monitor:
+                        self._client.client.download_file(
+                            obj.netloc,
+                            obj.path.lstrip("/"),
+                            local_filepath,
+                            ExtraArgs=extra_args,
+                            Config=TransferConfig(use_threads=False),
+                            Callback=monitor,
+                        )
 
 
 class GCPDownloader(Downloader):
