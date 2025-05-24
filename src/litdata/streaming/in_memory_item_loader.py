@@ -38,7 +38,7 @@ class InMemoryItemLoader(BaseItemLoader):
 
     def generate_intervals(self, chunks: Optional[List[Dict]] = None) -> List[Interval]:
         """Generate intervals for chunk loading.
-        
+
         Args:
             chunks: List of chunk information dicts. If None, uses self._chunks
         """
@@ -63,11 +63,11 @@ class InMemoryItemLoader(BaseItemLoader):
 
     def pre_load_chunk(self, chunk_filepath: str, chunk_index: int) -> bool:
         """Pre-load chunk into memory buffer.
-        
+
         Args:
             chunk_filepath: Path to the chunk file
             chunk_index: Index of the chunk
-            
+
         Returns:
             True if chunk was successfully loaded, False otherwise
         """
@@ -119,7 +119,7 @@ class InMemoryItemLoader(BaseItemLoader):
                 return self._deserialize_item(item_data, index)
 
             # Check if we have enough partial data
-            available_items = self.memory_manager.buffer.get_available_items(chunk_index)
+            available_items = self.chunk_buffer.get_available_items(chunk_index)
             if index in available_items:
                 item_data = self._get_item_from_buffer(chunk_index, index)
                 if item_data is not None:
@@ -137,21 +137,13 @@ class InMemoryItemLoader(BaseItemLoader):
         with self._lock:
             # Clear all chunks from buffer
             self.chunk_buffer.clear_all_chunks()
-            
+
             # Cancel any ongoing downloads
             self._chunk_downloaders.clear()
 
             # Remove download progress tracking
             self._download_progress.clear()
-            
-            logger.info("In-memory item loader cleaned up")
 
-    def delete(self) -> None:
-        """Delete and cleanup all loaded data."""
-        with self._lock:
-            self.chunk_buffer.clear_all_chunks()
-            self._chunk_downloaders.clear()
-            self._download_progress.clear()
             logger.info("In-memory item loader cleaned up")
 
     def encode_data(self, data: List[bytes], sizes: List[int], flattened: List[Any]) -> Any:
@@ -187,7 +179,7 @@ class InMemoryItemLoader(BaseItemLoader):
         try:
             # Get the remote URL from chunk configuration
             remote_filepath = self._get_remote_filepath(chunk_index, chunk_filepath)
-            
+
             if not remote_filepath:
                 logger.warning(f"Could not determine remote filepath for chunk {chunk_index}")
                 return
@@ -196,11 +188,8 @@ class InMemoryItemLoader(BaseItemLoader):
             def progress_callback(idx: int, progress: float) -> None:
                 self._download_progress[idx] = progress
 
-            success = self.streaming_downloader.stream_chunk(
-                remote_filepath,
-                self.memory_manager.buffer,
-                chunk_index,
-                progress_callback
+            success = self.downloader_manager.stream_chunk(
+                remote_filepath, self.chunk_buffer, chunk_index, progress_callback
             )
 
             if success:
@@ -228,14 +217,17 @@ class InMemoryItemLoader(BaseItemLoader):
                 remote_dir = self._config._remote_dir
                 chunk_filename = os.path.basename(chunk_filepath)
                 return os.path.join(remote_dir, chunk_filename)
-            
+
             # If no remote directory, check if chunk_filepath is already a remote URL
-            if any(chunk_filepath.startswith(scheme) for scheme in ["s3://", "gs://", "azure://", "hf://", "http://", "https://"]):
+            if any(
+                chunk_filepath.startswith(scheme)
+                for scheme in ["s3://", "gs://", "azure://", "hf://", "http://", "https://"]
+            ):
                 return chunk_filepath
-                
+
             # Default to local file
             return f"local:{chunk_filepath}"
-            
+
         except Exception as e:
             logger.debug(f"Error determining remote filepath for chunk {chunk_index}: {e}")
             return None
@@ -273,7 +265,7 @@ class InMemoryItemLoader(BaseItemLoader):
                     # Store partial data in buffer
                     is_complete = bytes_read >= file_size
                     if len(data_buffer) >= buffer_size or is_complete:
-                        success = self.memory_manager.buffer.append_chunk_data(chunk_index, data_buffer)
+                        success = self.chunk_buffer.append_chunk_data(chunk_index, data_buffer)
                         if not success:
                             logger.warning(f"Failed to store chunk data for chunk {chunk_index}")
                             break
@@ -290,18 +282,16 @@ class InMemoryItemLoader(BaseItemLoader):
     def _ensure_chunk_download(self, chunk_index: int, chunk_filepath: str) -> None:
         """Ensure chunk download is started."""
         with self._lock:
-            if chunk_index not in self._chunk_downloaders and not self.memory_manager.buffer.is_chunk_available(
-                chunk_index
-            ):
-                self.pre_load_chunk(chunk_index, chunk_filepath)
+            if chunk_index not in self._chunk_downloaders and not self.chunk_buffer.is_chunk_available(chunk_index):
+                self.pre_load_chunk(chunk_filepath, chunk_index)
 
     def _get_item_from_buffer(self, chunk_index: int, item_index: int) -> Optional[bytes]:
         """Get item data from memory buffer."""
-        if not self.memory_manager.buffer.is_chunk_available(chunk_index):
+        if not self.chunk_buffer.is_chunk_available(chunk_index):
             return None
 
         # Get chunk metadata to find item offset
-        metadata = self.memory_manager.buffer._metadata.get(chunk_index)
+        metadata = self.chunk_buffer._metadata.get(chunk_index)
         if not metadata or not metadata.item_offsets:
             return None
 
@@ -314,7 +304,7 @@ class InMemoryItemLoader(BaseItemLoader):
         item_size = item_end - item_start
 
         # Get item data
-        return self.memory_manager.buffer.get_partial_chunk_data(chunk_index, item_start, item_size)
+        return self.chunk_buffer.get_partial_chunk_data(chunk_index, item_start, item_size)
 
     def _deserialize_item(self, item_data: bytes, item_index: int) -> Any:
         """Deserialize item data."""
