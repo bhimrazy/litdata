@@ -3,12 +3,13 @@
 import logging
 import os
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from litdata.streaming.item_loader import BaseItemLoader, Interval
 from litdata.streaming.streaming_buffer import MemoryManager, StreamingConfig
+from litdata.streaming.streaming_downloader import StreamingDownloaderManager
 from litdata.utilities._pytree import tree_unflatten
 
 logger = logging.getLogger("litdata.streaming.in_memory_item_loader")
@@ -30,6 +31,7 @@ class InMemoryItemLoader(BaseItemLoader):
         super().__init__()
         self.config = config or StreamingConfig()
         self.memory_manager = MemoryManager(self.config)
+        self.streaming_downloader = StreamingDownloaderManager()
         self._lock = threading.RLock()
         self._chunk_downloaders: Dict[int, threading.Thread] = {}
         self._download_progress: Dict[int, float] = {}
@@ -170,7 +172,65 @@ class InMemoryItemLoader(BaseItemLoader):
             self.pre_load_chunk(chunk_index, chunk_filepath)
 
     def _download_chunk_background(self, chunk_index: int, chunk_filepath: str) -> None:
-        """Download chunk in background with progress tracking."""
+        """Download chunk in background with progress tracking using streaming downloader."""
+        try:
+            # Get the remote URL from chunk configuration
+            remote_filepath = self._get_remote_filepath(chunk_index, chunk_filepath)
+            
+            if not remote_filepath:
+                logger.warning(f"Could not determine remote filepath for chunk {chunk_index}")
+                return
+
+            # Use streaming downloader to download directly to memory
+            def progress_callback(idx: int, progress: float) -> None:
+                self._download_progress[idx] = progress
+
+            success = self.streaming_downloader.stream_chunk(
+                remote_filepath,
+                self.memory_manager.buffer,
+                chunk_index,
+                progress_callback
+            )
+
+            if success:
+                logger.debug(f"Successfully streamed chunk {chunk_index} from {remote_filepath}")
+                self._download_progress[chunk_index] = 1.0
+            else:
+                logger.warning(f"Failed to stream chunk {chunk_index}, falling back to disk-based loading")
+                # Fallback to original disk-based approach
+                self._download_chunk_from_disk(chunk_index, chunk_filepath)
+
+        except Exception as e:
+            logger.error(f"Error streaming chunk {chunk_index}: {e}")
+            # Fallback to original disk-based approach
+            self._download_chunk_from_disk(chunk_index, chunk_filepath)
+        finally:
+            # Clean up
+            with self._lock:
+                self._chunk_downloaders.pop(chunk_index, None)
+
+    def _get_remote_filepath(self, chunk_index: int, chunk_filepath: str) -> Optional[str]:
+        """Get remote filepath from chunk configuration."""
+        try:
+            # Get remote directory from config
+            if hasattr(self._config, "_remote_dir") and self._config._remote_dir:
+                remote_dir = self._config._remote_dir
+                chunk_filename = os.path.basename(chunk_filepath)
+                return os.path.join(remote_dir, chunk_filename)
+            
+            # If no remote directory, check if chunk_filepath is already a remote URL
+            if any(chunk_filepath.startswith(scheme) for scheme in ["s3://", "gs://", "azure://", "hf://", "http://", "https://"]):
+                return chunk_filepath
+                
+            # Default to local file
+            return f"local:{chunk_filepath}"
+            
+        except Exception as e:
+            logger.debug(f"Error determining remote filepath for chunk {chunk_index}: {e}")
+            return None
+
+    def _download_chunk_from_disk(self, chunk_index: int, chunk_filepath: str) -> None:
+        """Fallback method: download chunk from disk (original approach)."""
         try:
             if not os.path.exists(chunk_filepath):
                 logger.warning(f"Chunk file does not exist: {chunk_filepath}")
@@ -211,14 +271,10 @@ class InMemoryItemLoader(BaseItemLoader):
                     if is_complete:
                         break
 
-                logger.debug(f"Completed downloading chunk {chunk_index} ({bytes_read} bytes)")
+                logger.debug(f"Completed downloading chunk {chunk_index} from disk ({bytes_read} bytes)")
 
         except Exception as e:
-            logger.error(f"Error downloading chunk {chunk_index}: {e}")
-        finally:
-            # Clean up
-            with self._lock:
-                self._chunk_downloaders.pop(chunk_index, None)
+            logger.error(f"Error downloading chunk from disk {chunk_index}: {e}")
 
     def _ensure_chunk_download(self, chunk_index: int, chunk_filepath: str) -> None:
         """Ensure chunk download is started."""
