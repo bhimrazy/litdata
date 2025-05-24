@@ -35,6 +35,7 @@ class InMemoryItemLoader(BaseItemLoader):
         self._lock = threading.RLock()
         self._chunk_downloaders: Dict[int, threading.Thread] = {}
         self._download_progress: Dict[int, float] = {}
+        self.region_of_interest = None  # Add missing attribute
 
     def generate_intervals(self, chunks: Optional[List[Dict]] = None) -> List[Interval]:
         """Generate intervals for chunk loading.
@@ -153,7 +154,14 @@ class InMemoryItemLoader(BaseItemLoader):
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get memory usage statistics."""
-        return self.chunk_buffer.get_memory_usage()
+        buffer_stats = self.chunk_buffer.get_memory_usage()
+        return {
+            "total_memory_usage": buffer_stats["current_usage"],
+            "max_memory_size": buffer_stats["max_size"],
+            "num_chunks_cached": buffer_stats["num_chunks"],
+            "memory_utilization": buffer_stats["usage_ratio"],
+            "chunks": buffer_stats["chunks"],
+        }
 
     def get_chunk_progress(self, chunk_index: int) -> float:
         """Get download progress for a chunk (0.0 to 1.0)."""
