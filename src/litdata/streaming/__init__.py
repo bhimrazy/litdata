@@ -16,6 +16,7 @@ from litdata.streaming.combined import CombinedStreamingDataset
 from litdata.streaming.dataloader import StreamingDataLoader
 from litdata.streaming.dataset import StreamingDataset
 from litdata.streaming.item_loader import TokensLoader
+from litdata.streaming.in_memory_item_loader import InMemoryItemLoader
 
 __all__ = [
     "Cache",
@@ -23,4 +24,5 @@ __all__ = [
     "CombinedStreamingDataset",
     "StreamingDataLoader",
     "TokensLoader",
+    "InMemoryItemLoader",
 ]
