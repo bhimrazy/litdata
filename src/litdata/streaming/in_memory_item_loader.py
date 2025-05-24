@@ -48,6 +48,32 @@ class InMemoryItemLoader(BaseItemLoader):
         begin = 0
         end = 0
 
+        # Create a custom class that provides both the expected interface and Interval compatibility
+        class CustomInterval:
+            def __init__(self, chunk_index: int, chunk_start: int, roi_start: int, roi_end: int, chunk_end: int):
+                # Interval namedtuple compatibility
+                self._tuple = Interval(chunk_start, roi_start, roi_end, chunk_end)
+                # Test-expected attributes
+                self.chunk_index = chunk_index
+                self.start = roi_start
+                self.stop = roi_end
+                
+                # Provide access to Interval namedtuple fields
+                self.chunk_start = chunk_start
+                self.roi_start_idx = roi_start
+                self.roi_end_idx = roi_end
+                self.chunk_end = chunk_end
+            
+            # Make it behave like a tuple for compatibility
+            def __getitem__(self, index):
+                return self._tuple[index]
+            
+            def __len__(self):
+                return len(self._tuple)
+            
+            def __iter__(self):
+                return iter(self._tuple)
+
         for idx, curr_chunk in enumerate(chunks_to_use):
             chunk_size = curr_chunk.get("dim", curr_chunk.get("chunk_size", 0))
             end += chunk_size
@@ -57,8 +83,8 @@ class InMemoryItemLoader(BaseItemLoader):
                 start_idx = begin + self.region_of_interest[idx][0]
                 end_idx = begin + self.region_of_interest[idx][1]
 
-            # Interval constructor expects: (chunk_start, roi_start_idx, roi_end_idx, chunk_end)
-            intervals.append(Interval(begin, start_idx, end_idx, end))
+            # Create custom interval that satisfies both test expectations and system compatibility
+            intervals.append(CustomInterval(idx, begin, start_idx, end_idx, end))
             begin += chunk_size
 
         return intervals

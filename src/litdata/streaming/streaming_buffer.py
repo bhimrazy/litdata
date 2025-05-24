@@ -111,7 +111,9 @@ class StreamingChunkBuffer:
             
             # Check if we need to evict data (only if net increase would exceed limit)
             if net_memory_change > 0 and self._current_memory_usage + net_memory_change > self.config.max_memory_size:
-                required_space = net_memory_change
+                # Calculate how much we actually need to free
+                overflow = (self._current_memory_usage + net_memory_change) - self.config.max_memory_size
+                required_space = overflow
                 if not self._evict_chunks(required_space):
                     # Could not free enough space
                     return False

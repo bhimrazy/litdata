@@ -76,16 +76,16 @@ class TestStreamingChunkBuffer:
         )
         buffer = StreamingChunkBuffer(small_config)
 
-        # Store data that exceeds memory limit
-        large_data = b"x" * 60  # 60 bytes
-        buffer.store_chunk_data(0, large_data)
-        buffer.store_chunk_data(1, large_data)  # This should succeed
+        # Store data that fits within memory limit when combined (40 + 40 = 80 < 100)
+        data = b"x" * 40  # 40 bytes
+        buffer.store_chunk_data(0, data)
+        buffer.store_chunk_data(1, data)  # This should succeed
 
-        # Store more data to trigger eviction
-        more_data = b"y" * 60
+        # Store more data to trigger eviction (40 + 40 + 40 = 120 > 100)
+        more_data = b"y" * 40
         success = buffer.store_chunk_data(2, more_data)
 
-        # Should evict oldest chunk (0) to make room
+        # Should evict least recently used chunk (0) to make room
         assert not buffer.is_chunk_available(0)
         assert buffer.is_chunk_available(1)
         assert buffer.is_chunk_available(2)
