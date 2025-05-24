@@ -76,6 +76,14 @@ class InMemoryItemLoader(BaseItemLoader):
 
         for idx, curr_chunk in enumerate(chunks_to_use):
             chunk_size = curr_chunk.get("dim", curr_chunk.get("chunk_size", 0))
+            
+            # Handle case where chunk_size might be None
+            if chunk_size is None:
+                # Try alternative fields that might contain the chunk size
+                chunk_size = curr_chunk.get("samples", curr_chunk.get("length", 0))
+                if chunk_size is None:
+                    chunk_size = 0
+                    
             end += chunk_size
             start_idx, end_idx = begin, end
 
@@ -342,36 +350,38 @@ class InMemoryItemLoader(BaseItemLoader):
         return self.chunk_buffer.get_partial_chunk_data(chunk_index, item_start, item_size)
 
     def _deserialize_item(self, item_data: bytes, item_index: int) -> Any:
-        """Deserialize item data."""
+        """Deserialize item data using the same logic as PyTreeLoader."""
         try:
-            # Parse the serialized data structure
-            # Format: [data_format_size][data_format][serialized_data]
-
-            if len(item_data) < 4:
-                raise ValueError("Item data too short")
-
-            # Read data format size
-            format_size = np.frombuffer(item_data[:4], np.uint32)[0]
-
-            if len(item_data) < 4 + format_size:
-                raise ValueError("Invalid data format size")
-
-            # Read data format
-            data_format = item_data[4 : 4 + format_size].decode("utf-8")
-
-            # Read serialized data
-            serialized_data = item_data[4 + format_size :]
-
-            # Deserialize using appropriate serializer
-            serializer_key = self._data_format_to_key(data_format)
-            if serializer_key not in self._serializers:
-                raise ValueError(f"No serializer found for format: {data_format}")
-
-            serializer = self._serializers[serializer_key]
-            return serializer.deserialize(serialized_data)
+            # Use the same deserialization logic as PyTreeLoader
+            # Format: [size_header][concatenated_data]
+            # where size_header contains the byte sizes of each object encoded as uint32
+            
+            idx = self._shift_idx  # Skip the size header
+            if len(item_data) < idx:
+                raise ValueError("Item data too short for size header")
+                
+            # Read the sizes from the header
+            sizes = np.frombuffer(item_data[:idx], np.uint32)
+            
+            # Deserialize each data segment
+            data = []
+            for size, data_format in zip(sizes, self._data_format):
+                if idx + size > len(item_data):
+                    raise ValueError(f"Item data truncated at index {idx}, expected {size} more bytes")
+                    
+                serializer = self._serializers[data_format]
+                data_bytes = item_data[idx : idx + size]
+                data.append(serializer.deserialize(data_bytes))
+                idx += size
+                
+            # Reconstruct the original object using PyTree
+            return tree_unflatten(data, self._config["data_spec"])
 
         except Exception as e:
             logger.error(f"Failed to deserialize item {item_index}: {e}")
+            # Log first few bytes for debugging
+            data_preview = item_data[:min(50, len(item_data))]
+            logger.error(f"Item data preview (first 50 bytes): {data_preview}")
             return None
 
     def _load_item_directly(
