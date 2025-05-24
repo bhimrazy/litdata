@@ -104,18 +104,21 @@ class StreamingChunkBuffer:
             True if stored successfully, False if evicted due to memory constraints
         """
         with self._lock:
-            # Check if we need to evict data
+            # Calculate net memory change
             data_size = len(data)
-            if self._current_memory_usage + data_size > self.config.max_memory_size and not self._evict_chunks(
-                data_size
-            ):
-                # Could not free enough space
-                return False
+            old_size = len(self._chunks[chunk_index]) if chunk_index in self._chunks else 0
+            net_memory_change = data_size - old_size
+            
+            # Check if we need to evict data (only if net increase would exceed limit)
+            if net_memory_change > 0 and self._current_memory_usage + net_memory_change > self.config.max_memory_size:
+                required_space = net_memory_change
+                if not self._evict_chunks(required_space):
+                    # Could not free enough space
+                    return False
 
             # Store the chunk data
             if chunk_index in self._chunks:
                 # Update existing chunk
-                old_size = len(self._chunks[chunk_index])
                 self._current_memory_usage -= old_size
 
             self._chunks[chunk_index] = data
@@ -195,11 +198,11 @@ class StreamingChunkBuffer:
             return []
 
         metadata = self._metadata[chunk_index]
-        
+
         # For testing purposes, if metadata has item_count attribute, use it
         if hasattr(metadata, 'item_count') and metadata.item_count:
             return list(range(metadata.item_count))
-        
+
         if not metadata.is_complete or not metadata.item_offsets:
             # If not complete but we have num_items, return partial availability
             if metadata.num_items > 0:

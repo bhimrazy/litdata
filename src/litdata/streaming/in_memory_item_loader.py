@@ -57,7 +57,8 @@ class InMemoryItemLoader(BaseItemLoader):
                 start_idx = begin + self.region_of_interest[idx][0]
                 end_idx = begin + self.region_of_interest[idx][1]
 
-            intervals.append(Interval(idx, start_idx, end_idx, end))
+            # Interval constructor expects: (chunk_start, roi_start_idx, roi_end_idx, chunk_end)
+            intervals.append(Interval(begin, start_idx, end_idx, end))
             begin += chunk_size
 
         return intervals
