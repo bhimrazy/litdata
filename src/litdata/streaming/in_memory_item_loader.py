@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from litdata.streaming.item_loader import BaseItemLoader, Interval
-from litdata.streaming.streaming_buffer import MemoryManager, StreamingConfig
+from litdata.streaming.streaming_buffer import StreamingChunkBuffer, StreamingConfig
 from litdata.streaming.streaming_downloader import StreamingDownloaderManager
 from litdata.utilities._pytree import tree_unflatten
 
@@ -22,52 +22,63 @@ class InMemoryItemLoader(BaseItemLoader):
     progressive loading and memory management.
     """
 
-    def __init__(self, config: Optional[StreamingConfig] = None):
+    def __init__(self, streaming_config: Optional[StreamingConfig] = None):
         """Initialize the in-memory item loader.
 
         Args:
-            config: Configuration for streaming buffer behavior
+            streaming_config: Configuration for streaming buffer behavior
         """
         super().__init__()
-        self.config = config or StreamingConfig()
-        self.memory_manager = MemoryManager(self.config)
-        self.streaming_downloader = StreamingDownloaderManager()
+        self.streaming_config = streaming_config or StreamingConfig()
+        self.chunk_buffer = StreamingChunkBuffer(self.streaming_config)
+        self.downloader_manager = StreamingDownloaderManager()
         self._lock = threading.RLock()
         self._chunk_downloaders: Dict[int, threading.Thread] = {}
         self._download_progress: Dict[int, float] = {}
 
-    def generate_intervals(self) -> List[Interval]:
-        """Generate intervals for chunk loading."""
+    def generate_intervals(self, chunks: Optional[List[Dict]] = None) -> List[Interval]:
+        """Generate intervals for chunk loading.
+        
+        Args:
+            chunks: List of chunk information dicts. If None, uses self._chunks
+        """
+        chunks_to_use = chunks if chunks is not None else self._chunks
         intervals = []
         begin = 0
         end = 0
 
-        for idx, curr_chunk in enumerate(self._chunks):
-            end += curr_chunk["chunk_size"]
+        for idx, curr_chunk in enumerate(chunks_to_use):
+            chunk_size = curr_chunk.get("dim", curr_chunk.get("chunk_size", 0))
+            end += chunk_size
             start_idx, end_idx = begin, end
 
-            if self.region_of_interest is not None:
+            if self.region_of_interest is not None and idx < len(self.region_of_interest):
                 start_idx = begin + self.region_of_interest[idx][0]
                 end_idx = begin + self.region_of_interest[idx][1]
 
-            intervals.append(Interval(begin, start_idx, end_idx, end))
-            begin += curr_chunk["chunk_size"]
+            intervals.append(Interval(idx, start_idx, end_idx, end))
+            begin += chunk_size
 
         return intervals
 
-    def pre_load_chunk(self, chunk_index: int, chunk_filepath: str) -> None:
-        """Pre-load chunk into memory buffer."""
+    def pre_load_chunk(self, chunk_filepath: str, chunk_index: int) -> bool:
+        """Pre-load chunk into memory buffer.
+        
+        Args:
+            chunk_filepath: Path to the chunk file
+            chunk_index: Index of the chunk
+            
+        Returns:
+            True if chunk was successfully loaded, False otherwise
+        """
         with self._lock:
-            # Check if chunk is already being downloaded or available
-            if chunk_index in self._chunk_downloaders or self.memory_manager.buffer.is_chunk_available(chunk_index):
-                return
+            # Check if chunk is already available
+            if self.chunk_buffer.is_chunk_available(chunk_index):
+                return True
 
-            # Start background download
-            download_thread = threading.Thread(
-                target=self._download_chunk_background, args=(chunk_index, chunk_filepath), daemon=True
-            )
-            self._chunk_downloaders[chunk_index] = download_thread
-            download_thread.start()
+            # Try to load chunk using downloader manager
+            success = self.downloader_manager.stream_chunk(chunk_filepath, self.chunk_buffer, chunk_index)
+            return success
 
     def load_item_from_chunk(
         self,
@@ -121,27 +132,27 @@ class InMemoryItemLoader(BaseItemLoader):
         logger.warning(f"Streaming failed for chunk {chunk_index}, item {index}. Falling back to direct file access.")
         return self._load_item_directly(index, chunk_index, chunk_filepath, begin, filesize_bytes)
 
-    def delete(self, chunk_index: int, chunk_filepath: str) -> None:
-        """Delete chunk from memory and disk."""
+    def delete(self) -> None:
+        """Delete and cleanup all loaded data."""
         with self._lock:
-            # Remove from memory buffer
-            self.memory_manager.buffer.remove_chunk(chunk_index)
-
+            # Clear all chunks from buffer
+            self.chunk_buffer.clear_all_chunks()
+            
             # Cancel any ongoing downloads
-            if chunk_index in self._chunk_downloaders:
-                # Note: We can't actually cancel the thread, but we can mark it as cancelled
-                del self._chunk_downloaders[chunk_index]
+            self._chunk_downloaders.clear()
 
             # Remove download progress tracking
-            self._download_progress.pop(chunk_index, None)
+            self._download_progress.clear()
+            
+            logger.info("In-memory item loader cleaned up")
 
-        # Delete from disk if exists
-        if os.path.exists(chunk_filepath):
-            try:
-                os.remove(chunk_filepath)
-                logger.debug(f"Deleted chunk file: {chunk_filepath}")
-            except OSError as e:
-                logger.warning(f"Failed to delete chunk file {chunk_filepath}: {e}")
+    def delete(self) -> None:
+        """Delete and cleanup all loaded data."""
+        with self._lock:
+            self.chunk_buffer.clear_all_chunks()
+            self._chunk_downloaders.clear()
+            self._download_progress.clear()
+            logger.info("In-memory item loader cleaned up")
 
     def encode_data(self, data: List[bytes], sizes: List[int], flattened: List[Any]) -> Any:
         """Encode data for storage."""
@@ -150,7 +161,7 @@ class InMemoryItemLoader(BaseItemLoader):
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get memory usage statistics."""
-        return self.memory_manager.buffer.get_memory_usage()
+        return self.chunk_buffer.get_memory_usage()
 
     def get_chunk_progress(self, chunk_index: int) -> float:
         """Get download progress for a chunk (0.0 to 1.0)."""
@@ -158,7 +169,7 @@ class InMemoryItemLoader(BaseItemLoader):
 
     def is_item_available(self, chunk_index: int, item_index: int) -> bool:
         """Check if a specific item is available in memory."""
-        available_items = self.memory_manager.buffer.get_available_items(chunk_index)
+        available_items = self.chunk_buffer.get_available_items(chunk_index)
         return item_index in available_items
 
     def prefetch_items(self, chunk_index: int, start_item: int, num_items: int) -> None:
@@ -169,7 +180,7 @@ class InMemoryItemLoader(BaseItemLoader):
 
         chunk_filepath = chunk_info.get("filename", "")
         if chunk_filepath:
-            self.pre_load_chunk(chunk_index, chunk_filepath)
+            self.pre_load_chunk(chunk_filepath, chunk_index)
 
     def _download_chunk_background(self, chunk_index: int, chunk_filepath: str) -> None:
         """Download chunk in background with progress tracking using streaming downloader."""

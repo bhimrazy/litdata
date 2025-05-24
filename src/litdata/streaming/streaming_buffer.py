@@ -44,6 +44,8 @@ class StreamingConfig:
     prefetch_items: int = 10  # Number of items to prefetch ahead
     enable_compression: bool = False
     compression_threshold: int = 1024  # Compress chunks larger than 1KB
+    chunk_timeout: int = 30  # Timeout for chunk operations in seconds
+    enable_memory_monitoring: bool = True  # Enable memory monitoring
 
 
 class StreamingChunkBuffer:
@@ -217,6 +219,10 @@ class StreamingChunkBuffer:
             self._metadata.clear()
             self._access_order.clear()
             self._current_memory_usage = 0
+
+    def clear_all_chunks(self) -> None:
+        """Clear all cached chunks (alias for clear method)."""
+        self.clear()
 
     def _parse_chunk_metadata(self, chunk_index: int, data: bytes, is_complete: bool) -> ChunkMetadata:
         """Parse chunk metadata from binary data.
