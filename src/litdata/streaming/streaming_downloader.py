@@ -303,10 +303,68 @@ class AzureStreamingDownloader(StreamingDownloader):
     ) -> bool:
         """Stream Azure blob directly to memory buffer."""
         try:
-            # TODO: Implement Azure streaming download
-            # This would be similar to S3 but using Azure SDK
-            logger.warning("Azure streaming download not yet implemented")
-            return False
+            from azure.storage.blob import BlobServiceClient
+
+            obj = parse.urlparse(remote_filepath)
+            if obj.scheme != "azure":
+                return False
+
+            container_name = obj.netloc
+            blob_name = obj.path.lstrip("/")
+
+            # Initialize Azure client
+            service = BlobServiceClient(**self.storage_options)
+            blob_client = service.get_blob_client(container=container_name, blob=blob_name)
+
+            # Get blob properties to determine size
+            try:
+                properties = blob_client.get_blob_properties()
+                total_size = properties.size
+            except Exception as e:
+                logger.error(f"Failed to get blob properties for {remote_filepath}: {e}")
+                return False
+
+            # Stream download with range requests
+            chunk_size = 64 * 1024  # 64KB chunks
+            bytes_downloaded = 0
+
+            while bytes_downloaded < total_size:
+                # Calculate range for this request
+                end_byte = min(bytes_downloaded + chunk_size - 1, total_size - 1)
+
+                try:
+                    # Download this range
+                    blob_data = blob_client.download_blob(
+                        offset=bytes_downloaded, length=end_byte - bytes_downloaded + 1
+                    )
+                    chunk_data = blob_data.readall()
+
+                    if not chunk_data:
+                        break
+
+                    # Store in buffer
+                    if bytes_downloaded == 0:
+                        success = buffer.store_chunk_data(chunk_index, chunk_data, is_complete=False)
+                    else:
+                        success = buffer.append_chunk_data(chunk_index, chunk_data)
+
+                    if not success:
+                        logger.warning(f"Failed to store chunk data for Azure chunk {chunk_index}")
+                        return False
+
+                    bytes_downloaded += len(chunk_data)
+
+                    # Update progress
+                    progress = bytes_downloaded / total_size
+                    if progress_callback:
+                        progress_callback(chunk_index, progress)
+
+                except Exception as e:
+                    logger.error(f"Failed to download range {bytes_downloaded}-{end_byte} for {remote_filepath}: {e}")
+                    return False
+
+            logger.debug(f"Successfully streamed Azure chunk {chunk_index} ({bytes_downloaded} bytes)")
+            return True
 
         except Exception as e:
             logger.error(f"Failed to stream Azure chunk {remote_filepath}: {e}")
@@ -336,7 +394,7 @@ class HFStreamingDownloader(StreamingDownloader):
         try:
             # TODO: Implement HF streaming download
             # This would require HF Hub streaming APIs
-            logger.warning("Hugging Face streaming download not yet implemented")
+            logger.warning("HF streaming download not yet implemented")
             return False
 
         except Exception as e:
