@@ -189,7 +189,7 @@ class InMemoryItemLoader(BaseItemLoader):
                 self._download_progress[idx] = progress
 
             success = self.downloader_manager.stream_chunk(
-                remote_filepath, self.chunk_buffer, chunk_index, progress_callback
+                remote_filepath, self.chunk_buffer, chunk_index
             )
 
             if success:
@@ -213,8 +213,8 @@ class InMemoryItemLoader(BaseItemLoader):
         """Get remote filepath from chunk configuration."""
         try:
             # Get remote directory from config
-            if hasattr(self._config, "_remote_dir") and self._config._remote_dir:
-                remote_dir = self._config._remote_dir
+            if hasattr(self.streaming_config, "_remote_dir") and self.streaming_config._remote_dir:
+                remote_dir = self.streaming_config._remote_dir
                 chunk_filename = os.path.basename(chunk_filepath)
                 return os.path.join(remote_dir, chunk_filename)
 

@@ -72,14 +72,24 @@ class StreamingChunkBuffer:
             return None
 
     def get_partial_chunk_data(self, chunk_index: int, offset: int, size: int) -> Optional[bytes]:
-        """Get partial chunk data from the specified offset."""
-        with self._lock:
-            if chunk_index in self._chunks:
-                chunk_data = self._chunks[chunk_index]
-                if offset + size <= len(chunk_data):
-                    self._update_access(chunk_index)
-                    return chunk_data[offset : offset + size]
+        """Get partial data from a chunk.
+
+        Args:
+            chunk_index: Index of the chunk
+            offset: Offset within the chunk
+            size: Number of bytes to read
+
+        Returns:
+            Partial chunk data or None if not available
+        """
+        if chunk_index not in self._chunks:
             return None
+
+        chunk_data = self._chunks[chunk_index]
+        if offset + size > len(chunk_data):
+            return None
+
+        return chunk_data[offset : offset + size]
 
     def store_chunk_data(self, chunk_index: int, data: bytes, is_complete: bool = True) -> bool:
         """Store chunk data in buffer.
@@ -168,23 +178,23 @@ class StreamingChunkBuffer:
         return metadata.is_complete if metadata else False
 
     def get_available_items(self, chunk_index: int) -> List[int]:
-        """Get list of item indices that are available in the chunk."""
-        metadata = self._metadata.get(chunk_index)
-        if not metadata or not metadata.item_offsets:
+        """Get list of available item indices for a chunk.
+
+        Args:
+            chunk_index: Index of the chunk
+
+        Returns:
+            List of available item indices
+        """
+        if chunk_index not in self._metadata:
             return []
 
-        chunk_data = self._chunks.get(chunk_index)
-        if not chunk_data:
+        metadata = self._metadata[chunk_index]
+        if not metadata.is_complete or not metadata.item_offsets:
             return []
 
-        available_items = []
-        for i, offset in enumerate(metadata.item_offsets[:-1]):  # Exclude last offset
-            next_offset = metadata.item_offsets[i + 1]
-            # Check if we have enough data for this item
-            if next_offset <= len(chunk_data):
-                available_items.append(i)
-
-        return available_items
+        # All items are available when chunk is complete
+        return list(range(metadata.num_items))
 
     def remove_chunk(self, chunk_index: int) -> bool:
         """Remove chunk from buffer."""
@@ -221,8 +231,13 @@ class StreamingChunkBuffer:
             self._current_memory_usage = 0
 
     def clear_all_chunks(self) -> None:
-        """Clear all cached chunks (alias for clear method)."""
-        self.clear()
+        """Clear all chunks from the buffer."""
+        with self._lock:
+            self._chunks.clear()
+            self._metadata.clear()
+            self._access_order.clear()
+            self._current_memory_usage = 0
+            logger.debug("Cleared all chunks from buffer")
 
     def _parse_chunk_metadata(self, chunk_index: int, data: bytes, is_complete: bool) -> ChunkMetadata:
         """Parse chunk metadata from binary data.
