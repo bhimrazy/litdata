@@ -60,6 +60,8 @@ class BaseItemLoader(ABC):
         self._shift_idx = len(self._data_format) * 4  # each item takes 4 bytes
         self.region_of_interest = region_of_interest
         self._force_download_queue = force_download_queue
+        self._cache_dir = None
+        self._remote_dir = None
 
         # setup the serializers on restart
         for data_format in self._data_format:
@@ -114,6 +116,22 @@ class BaseItemLoader(ABC):
     @abstractmethod
     def encode_data(self, data: List[bytes], sizes: List[int], flattened: List[Any]) -> Any:
         pass
+
+    @property
+    def cache_dir(self) -> Optional[str]:
+        return self._cache_dir
+
+    @cache_dir.setter
+    def cache_dir(self, value: str) -> None:
+        self._cache_dir = value
+
+    @property
+    def remote_dir(self) -> Optional[str]:
+        return self._remote_dir
+
+    @remote_dir.setter
+    def remote_dir(self, value: str) -> None:
+        self._remote_dir = value
 
 
 class PyTreeLoader(BaseItemLoader):
