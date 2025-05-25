@@ -153,7 +153,6 @@ class InMemoryItemLoader(BaseItemLoader):
         Returns:
             The loaded item
         """
-        print("loading", index, chunk_index, chunk_filepath, begin, filesize_bytes)
         # Try to get item from memory buffer first
         item_data = self._get_item_from_buffer(chunk_index, index)
         if item_data is not None:
