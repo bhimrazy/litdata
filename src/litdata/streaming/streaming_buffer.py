@@ -108,7 +108,7 @@ class StreamingChunkBuffer:
             data_size = len(data)
             old_size = len(self._chunks[chunk_index]) if chunk_index in self._chunks else 0
             net_memory_change = data_size - old_size
-            
+
             # Check if we need to evict data (only if net increase would exceed limit)
             if net_memory_change > 0 and self._current_memory_usage + net_memory_change > self.config.max_memory_size:
                 # Calculate how much we actually need to free
@@ -202,7 +202,7 @@ class StreamingChunkBuffer:
         metadata = self._metadata[chunk_index]
 
         # For testing purposes, if metadata has item_count attribute, use it
-        if hasattr(metadata, 'item_count') and metadata.item_count:
+        if hasattr(metadata, "item_count") and metadata.item_count:
             return list(range(metadata.item_count))
 
         if not metadata.is_complete or not metadata.item_offsets:
