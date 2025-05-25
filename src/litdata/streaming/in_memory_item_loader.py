@@ -35,7 +35,8 @@ class InMemoryItemLoader(BaseItemLoader):
         self._lock = threading.RLock()
         self._chunk_downloaders: Dict[int, threading.Thread] = {}
         self._download_progress: Dict[int, float] = {}
-        self.region_of_interest = None  # Add missing attribute
+        self.region_of_interest = None
+        self._remote_input_dir: Optional[str] = None  # Will be set during setup
 
     def generate_intervals(self, chunks: Optional[List[Dict]] = None) -> List[Interval]:
         """Generate intervals for chunk loading.
@@ -57,33 +58,33 @@ class InMemoryItemLoader(BaseItemLoader):
                 self.chunk_index = chunk_index
                 self.start = roi_start
                 self.stop = roi_end
-                
+
                 # Provide access to Interval namedtuple fields
                 self.chunk_start = chunk_start
                 self.roi_start_idx = roi_start
                 self.roi_end_idx = roi_end
                 self.chunk_end = chunk_end
-            
+
             # Make it behave like a tuple for compatibility
             def __getitem__(self, index):
                 return self._tuple[index]
-            
+
             def __len__(self):
                 return len(self._tuple)
-            
+
             def __iter__(self):
                 return iter(self._tuple)
 
         for idx, curr_chunk in enumerate(chunks_to_use):
             chunk_size = curr_chunk.get("dim", curr_chunk.get("chunk_size", 0))
-            
+
             # Handle case where chunk_size might be None
             if chunk_size is None:
                 # Try alternative fields that might contain the chunk size
                 chunk_size = curr_chunk.get("samples", curr_chunk.get("length", 0))
                 if chunk_size is None:
                     chunk_size = 0
-                    
+
             end += chunk_size
             start_idx, end_idx = begin, end
 
@@ -97,12 +98,12 @@ class InMemoryItemLoader(BaseItemLoader):
 
         return intervals
 
-    def pre_load_chunk(self, chunk_filepath: str, chunk_index: int) -> bool:
-        """Pre-load chunk into memory buffer.
+    def pre_load_chunk(self, chunk_index: int, chunk_filepath: str) -> bool:
+        """Pre-load chunk into memory buffer using streaming downloader.
 
         Args:
-            chunk_filepath: Path to the chunk file
             chunk_index: Index of the chunk
+            chunk_filepath: Path to the chunk file
 
         Returns:
             True if chunk was successfully loaded, False otherwise
@@ -112,9 +113,25 @@ class InMemoryItemLoader(BaseItemLoader):
             if self.chunk_buffer.is_chunk_available(chunk_index):
                 return True
 
-            # Try to load chunk using downloader manager
-            success = self.downloader_manager.stream_chunk(chunk_filepath, self.chunk_buffer, chunk_index)
-            return success
+            # Get remote filepath for streaming
+            remote_filepath = self._get_remote_filepath(chunk_index, chunk_filepath)
+            if not remote_filepath:
+                logger.warning(f"Could not determine remote filepath for chunk {chunk_index}")
+                return False
+
+            # Use streaming downloader for remote files, fallback to local for local files
+            if remote_filepath.startswith(("s3://", "gs://", "azure://", "hf://", "http://", "https://")):
+                logger.debug(f"Streaming chunk {chunk_index} from {remote_filepath}")
+                return self.downloader_manager.stream_chunk(
+                    remote_filepath,
+                    self.chunk_buffer,
+                    chunk_index,
+                    progress_callback=lambda idx, progress: self._update_download_progress(idx, progress),
+                )
+
+            # For local files, use the local streaming downloader
+            logger.debug(f"Loading local chunk {chunk_index} from {chunk_filepath}")
+            return self.downloader_manager.stream_chunk(chunk_filepath, self.chunk_buffer, chunk_index)
 
     def load_item_from_chunk(
         self,
@@ -136,6 +153,7 @@ class InMemoryItemLoader(BaseItemLoader):
         Returns:
             The loaded item
         """
+        print("loading", index, chunk_index, chunk_filepath, begin, filesize_bytes)
         # Try to get item from memory buffer first
         item_data = self._get_item_from_buffer(chunk_index, index)
         if item_data is not None:
@@ -215,7 +233,7 @@ class InMemoryItemLoader(BaseItemLoader):
 
         chunk_filepath = chunk_info.get("filename", "")
         if chunk_filepath:
-            self.pre_load_chunk(chunk_filepath, chunk_index)
+            self.pre_load_chunk(chunk_index, chunk_filepath)
 
     def _download_chunk_background(self, chunk_index: int, chunk_filepath: str) -> None:
         """Download chunk in background with progress tracking using streaming downloader."""
@@ -231,9 +249,7 @@ class InMemoryItemLoader(BaseItemLoader):
             def progress_callback(idx: int, progress: float) -> None:
                 self._download_progress[idx] = progress
 
-            success = self.downloader_manager.stream_chunk(
-                remote_filepath, self.chunk_buffer, chunk_index
-            )
+            success = self.downloader_manager.stream_chunk(remote_filepath, self.chunk_buffer, chunk_index)
 
             if success:
                 logger.debug(f"Successfully streamed chunk {chunk_index} from {remote_filepath}")
@@ -255,17 +271,17 @@ class InMemoryItemLoader(BaseItemLoader):
     def _get_remote_filepath(self, chunk_index: int, chunk_filepath: str) -> Optional[str]:
         """Get remote filepath from chunk configuration."""
         try:
-            # Get remote directory from config
-            if hasattr(self.streaming_config, "_remote_dir") and self.streaming_config._remote_dir:
-                remote_dir = self.streaming_config._remote_dir
+            # Use the remote directory captured during setup
+            if self.remote_dir:
                 chunk_filename = os.path.basename(chunk_filepath)
-                return os.path.join(remote_dir, chunk_filename)
+                return os.path.join(self.remote_dir, chunk_filename)
 
             # If no remote directory, check if chunk_filepath is already a remote URL
             if any(
                 chunk_filepath.startswith(scheme)
                 for scheme in ["s3://", "gs://", "azure://", "hf://", "http://", "https://"]
             ):
+                print(f"Using existing remote URL for chunk {chunk_index}: {chunk_filepath}")
                 return chunk_filepath
 
             # Default to local file
@@ -322,11 +338,35 @@ class InMemoryItemLoader(BaseItemLoader):
         except Exception as e:
             logger.error(f"Error downloading chunk from disk {chunk_index}: {e}")
 
+    def setup(
+        self,
+        config: Optional[Dict] = None,
+        chunks: Optional[List[Dict]] = None,
+        serializers: Optional[Dict] = None,
+        region_of_interest: Optional[List] = None,
+    ) -> None:
+        """Setup the item loader with configuration data.
+
+        Args:
+            config: Configuration dictionary
+            chunks: List of chunk information
+            serializers: Dictionary of serializers
+            region_of_interest: Region of interest specification
+        """
+        super().setup(config, chunks, serializers, region_of_interest)
+
+        # Update downloader manager with any storage options
+        if hasattr(self, "_config") and self._config:
+            storage_options = getattr(self._config, "_storage_options", {})
+            if storage_options:
+                self.downloader_manager = StreamingDownloaderManager(storage_options=storage_options)
+
     def _ensure_chunk_download(self, chunk_index: int, chunk_filepath: str) -> None:
-        """Ensure chunk download is started."""
+        """Ensure chunk download is started using streaming downloader."""
         with self._lock:
             if chunk_index not in self._chunk_downloaders and not self.chunk_buffer.is_chunk_available(chunk_index):
-                self.pre_load_chunk(chunk_filepath, chunk_index)
+                # Use the corrected parameter order: chunk_index first, then chunk_filepath
+                self.pre_load_chunk(chunk_index, chunk_filepath)
 
     def _get_item_from_buffer(self, chunk_index: int, item_index: int) -> Optional[bytes]:
         """Get item data from memory buffer."""
@@ -355,32 +395,32 @@ class InMemoryItemLoader(BaseItemLoader):
             # Use the same deserialization logic as PyTreeLoader
             # Format: [size_header][concatenated_data]
             # where size_header contains the byte sizes of each object encoded as uint32
-            
+
             idx = self._shift_idx  # Skip the size header
             if len(item_data) < idx:
                 raise ValueError("Item data too short for size header")
-                
+
             # Read the sizes from the header
             sizes = np.frombuffer(item_data[:idx], np.uint32)
-            
+
             # Deserialize each data segment
             data = []
             for size, data_format in zip(sizes, self._data_format):
                 if idx + size > len(item_data):
                     raise ValueError(f"Item data truncated at index {idx}, expected {size} more bytes")
-                    
+
                 serializer = self._serializers[data_format]
                 data_bytes = item_data[idx : idx + size]
                 data.append(serializer.deserialize(data_bytes))
                 idx += size
-                
+
             # Reconstruct the original object using PyTree
             return tree_unflatten(data, self._config["data_spec"])
 
         except Exception as e:
             logger.error(f"Failed to deserialize item {item_index}: {e}")
             # Log first few bytes for debugging
-            data_preview = item_data[:min(50, len(item_data))]
+            data_preview = item_data[: min(50, len(item_data))]
             logger.error(f"Item data preview (first 50 bytes): {data_preview}")
             return None
 
@@ -418,3 +458,15 @@ class InMemoryItemLoader(BaseItemLoader):
         except Exception as e:
             logger.error(f"Failed to load item {index} directly from {chunk_filepath}: {e}")
             return None
+
+    def _update_download_progress(self, chunk_index: int, progress: float) -> None:
+        """Update download progress tracking.
+
+        Args:
+            chunk_index: Index of the chunk being downloaded
+            progress: Download progress (0.0 to 1.0)
+        """
+        with self._lock:
+            self._download_progress[chunk_index] = progress
+            if progress >= 1.0:
+                logger.debug(f"Chunk {chunk_index} streaming completed")
