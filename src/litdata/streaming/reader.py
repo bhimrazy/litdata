@@ -45,6 +45,76 @@ _DEFAULT_TIMEOUT = 0.1
 _LONG_DEFAULT_TIMEOUT = 5
 
 
+def _get_adaptive_timeout(base_timeout: float, cpu_percent: float = None, memory_pressure: bool = False) -> float:
+    """Calculate adaptive timeout based on system conditions.
+
+    Args:
+        base_timeout: Base timeout value to adjust
+        cpu_percent: Current CPU usage percentage (0-100)
+        memory_pressure: Whether system is under memory pressure
+
+    Returns:
+        Adjusted timeout value optimized for current system conditions
+    """
+    import psutil
+
+    # Get system metrics if not provided
+    if cpu_percent is None:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+
+    # Memory pressure check if not provided
+    if not memory_pressure:
+        memory = psutil.virtual_memory()
+        memory_pressure = memory.percent > 80
+
+    adjusted_timeout = base_timeout
+
+    # Increase timeout under high CPU load to reduce polling overhead
+    if cpu_percent > 80:
+        adjusted_timeout *= 2.0
+    elif cpu_percent > 60:
+        adjusted_timeout *= 1.5
+
+    # Decrease timeout under memory pressure for faster cleanup
+    if memory_pressure:
+        adjusted_timeout *= 0.7
+
+    # Ensure timeout stays within reasonable bounds
+    return max(0.05, min(adjusted_timeout, 10.0))
+
+
+def _get_optimal_queue_timeout(operation_type: str = "default", system_load: str = "normal") -> float:
+    """Get optimized timeout values for different queue operations.
+
+    Args:
+        operation_type: Type of operation ('default', 'long', 'delete', 'download')
+        system_load: Current system load level ('low', 'normal', 'high')
+
+    Returns:
+        Optimized timeout value for the specified operation
+    """
+    # Base timeout values optimized for different operations
+    base_timeouts = {
+        "default": 0.1,
+        "long": 5.0,
+        "delete": 0.05,  # Faster for cleanup operations
+        "download": 0.2,  # Slightly longer for I/O operations
+        "stop": 0.0001,   # Very fast for stop checks
+    }
+
+    # Load-based multipliers
+    load_multipliers = {
+        "low": 0.8,      # Faster timeouts when system is idle
+        "normal": 1.0,   # Standard timeouts
+        "high": 1.5,     # Longer timeouts under high load
+    }
+
+    base_timeout = base_timeouts.get(operation_type, base_timeouts["default"])
+    multiplier = load_multipliers.get(system_load, 1.0)
+
+    return base_timeout * multiplier
+
+
 class PrepareChunksThread(Thread):
     """This thread is responsible to download the chunks associated to a given worker."""
 
@@ -525,7 +595,25 @@ def _get_folder_size(path: str, config: ChunksConfig) -> int:
     return size
 
 
-def _get_from_queue(queue: Queue, timeout: float = _DEFAULT_TIMEOUT) -> Optional[Any]:
+def _get_from_queue(queue: Queue, timeout: float = None, operation_type: str = "default") -> Optional[Any]:
+    """Get item from queue with adaptive timeout based on system conditions."""
+    if timeout is None:
+        # Use adaptive timeout based on current system load
+        import psutil
+        cpu_percent = psutil.cpu_percent(interval=0.01)  # Quick check
+        memory = psutil.virtual_memory()
+        memory_pressure = memory.percent > 80
+
+        # Determine system load level
+        if cpu_percent > 80 or memory_pressure:
+            system_load = "high"
+        elif cpu_percent < 30 and memory.percent < 50:
+            system_load = "low"
+        else:
+            system_load = "normal"
+
+        timeout = _get_optimal_queue_timeout(operation_type, system_load)
+
     try:
         return queue.get(timeout=timeout)
     except Empty:

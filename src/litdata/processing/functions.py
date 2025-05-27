@@ -98,9 +98,29 @@ def _get_input_dir(inputs: Sequence[Any]) -> Optional[str]:
 
 
 def _get_default_num_workers() -> int:
-    if torch.cuda.is_available():
-        return torch.cuda.device_count()
-    return os.cpu_count() or 1
+    """Optimize worker count based on available resources and workload characteristics."""
+    import psutil
+
+    # Get system resources
+    cpu_count = os.cpu_count() or 1
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    memory_gb = psutil.virtual_memory().total / (1024**3)
+
+    # Adaptive worker calculation
+    if gpu_count > 0:
+        # For GPU workloads, balance between GPU count and CPU cores
+        # Each GPU can handle 2-4 CPU workers efficiently
+        optimal_workers = min(gpu_count * 3, cpu_count)
+        return max(optimal_workers, gpu_count)
+
+    # For CPU-only workloads, consider memory constraints
+    # Estimate 2GB per worker minimum for large datasets
+    memory_limited_workers = max(1, int(memory_gb / 2))
+
+    # Use 75% of CPU cores to leave room for OS and other processes
+    cpu_limited_workers = max(1, int(cpu_count * 0.75))
+
+    return min(memory_limited_workers, cpu_limited_workers)
 
 
 class LambdaMapRecipe(MapRecipe):

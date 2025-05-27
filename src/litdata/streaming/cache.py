@@ -13,6 +13,7 @@
 
 import logging
 import os
+import psutil
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from litdata.constants import (
@@ -29,6 +30,66 @@ from litdata.utilities.env import _DistributedEnv, _WorkerEnv
 from litdata.utilities.format import _convert_bytes_to_int
 
 logger = logging.Logger(__name__)
+
+
+def _get_optimal_cache_size(requested_size: Union[int, str] = "100GB") -> int:
+    """Calculate optimal cache size based on available memory and performance guidelines."""
+    # Convert requested size to int
+    requested_bytes = _convert_bytes_to_int(requested_size) if isinstance(requested_size, str) else requested_size
+    
+    # Get available memory
+    memory_info = psutil.virtual_memory()
+    available_gb = memory_info.available / (1024**3)
+    
+    # Performance thresholds
+    MIN_RECOMMENDED_GB = 25
+    OPTIMAL_RATIO = 0.3  # Use max 30% of available memory for cache
+    
+    # Calculate optimal size
+    optimal_bytes = min(
+        requested_bytes,
+        int(memory_info.available * OPTIMAL_RATIO)
+    )
+    
+    optimal_gb = optimal_bytes / (1024**3)
+    requested_gb = requested_bytes / (1024**3)
+    
+    # Issue warnings for suboptimal configurations
+    if optimal_gb < MIN_RECOMMENDED_GB:
+        if available_gb < MIN_RECOMMENDED_GB:
+            logger.warning(
+                f"Available memory ({available_gb:.1f}GB) is less than recommended minimum "
+                f"({MIN_RECOMMENDED_GB}GB) for optimal performance. Consider using a machine "
+                f"with more memory or reducing batch sizes."
+            )
+        else:
+            logger.warning(
+                f"Cache size ({optimal_gb:.1f}GB) is below recommended minimum "
+                f"({MIN_RECOMMENDED_GB}GB). Performance may be suboptimal. "
+                f"Available memory: {available_gb:.1f}GB"
+            )
+    
+    if requested_gb > available_gb * 0.5:
+        logger.warning(
+            f"Requested cache size ({requested_gb:.1f}GB) exceeds 50% of available memory "
+            f"({available_gb:.1f}GB). This may cause memory pressure and swapping."
+        )
+    
+    return optimal_bytes
+
+
+def _get_optimal_pre_download(cache_size_bytes: int, chunk_avg_size: int = 64 * 1024 * 1024) -> int:
+    """Calculate optimal pre-download count based on cache size and chunk characteristics."""
+    # Base recommendation: 2-10 chunks based on cache size
+    cache_gb = cache_size_bytes / (1024**3)
+    
+    if cache_gb >= 50:
+        return 8  # High-performance setup
+    if cache_gb >= 25:
+        return 5  # Standard setup
+    if cache_gb >= 10:
+        return 3  # Limited memory
+    return 2  # Minimal setup
 
 
 class Cache:
@@ -83,11 +144,23 @@ class Cache:
             chunk_index=writer_chunk_index or 0,
             item_loader=item_loader,
         )
+        # Optimize cache configuration using system resources
+        optimized_cache_size = _get_optimal_cache_size(max_cache_size)
+        optimized_pre_download = _get_optimal_pre_download(optimized_cache_size)
+        
+        # Use optimized values, but allow user override for max_pre_download
+        final_pre_download = max_pre_download if max_pre_download != 2 else optimized_pre_download
+        
+        logger.debug(
+            f"Cache configuration: size={optimized_cache_size / (1024**3):.1f}GB, "
+            f"pre_download={final_pre_download}"
+        )
+        
         self._reader = BinaryReader(
             self._cache_dir,
             subsampled_files=subsampled_files,
             region_of_interest=region_of_interest,
-            max_cache_size=_convert_bytes_to_int(max_cache_size) if isinstance(max_cache_size, str) else max_cache_size,
+            max_cache_size=optimized_cache_size,
             remote_input_dir=input_dir.url,
             compression=compression,
             encryption=encryption,
@@ -95,7 +168,7 @@ class Cache:
             serializers=serializers,
             storage_options=storage_options,
             session_options=session_options,
-            max_pre_download=max_pre_download,
+            max_pre_download=final_pre_download,
         )
         self._is_done = False
         self._distributed_env = _DistributedEnv.detect()
