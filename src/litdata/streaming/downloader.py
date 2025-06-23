@@ -12,6 +12,7 @@
 # limitations under the License.
 
 import contextlib
+import io
 import logging
 import os
 import shutil
@@ -77,6 +78,15 @@ class Downloader(ABC):
         logger.debug(_get_log_msg({"name": f"download_chunk_from_index_{chunk_index}", "ph": "E"}))
 
     def download_file(self, remote_chunkpath: str, local_chunkpath: str) -> None:
+        pass
+
+    def download_chunk_from_index_to_fileobj(self, chunk_index: int, file_obj: "io.BytesIO") -> None:
+        chunk_filename = self._chunks[chunk_index]["filename"]
+        remote_chunkpath = os.path.join(self._remote_dir, chunk_filename)
+
+        self.download_fileobj(remote_chunkpath, file_obj)
+
+    def download_fileobj(self, remote_chunkpath: str, file_obj: "io.BytesIO") -> None:
         pass
 
 
@@ -164,6 +174,14 @@ class S3Downloader(Downloader):
                         ExtraArgs=extra_args,
                         Config=TransferConfig(use_threads=False),
                     )
+
+    def download_fileobj(self, remote_chunkpath: str, file_obj: "io.BytesIO") -> None:
+        obj = parse.urlparse(remote_chunkpath)
+
+        if obj.scheme != "s3":
+            raise ValueError(f"Expected obj.scheme to be `s3`, instead, got {obj.scheme} for remote={remote_chunkpath}")
+
+        self._client.client.download_fileobj(obj.netloc, obj.path.lstrip("/"), file_obj)
 
 
 class GCPDownloader(Downloader):

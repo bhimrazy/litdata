@@ -13,6 +13,7 @@
 import functools
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from copy import deepcopy
@@ -368,6 +369,77 @@ class PyTreeLoader(BaseItemLoader):
         state["_open_handle"] = None
         state["_chunk_filepath"] = None
         return state
+
+
+class InMemoryPyTreeLoader(PyTreeLoader):
+    """The InMemoryPyTreeLoader is a PyTreeLoader that loads items into memory."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._data: Dict[int, bytes] = {}
+        self._lock = threading.Lock()
+
+    def pre_load_chunk(self, chunk_index: int, chunk_data: bytes) -> None:
+        with self._lock:
+            self._data[chunk_index] = chunk_data
+
+    def load_item_from_chunk(
+        self,
+        index: int,
+        chunk_index: int,
+        chunk_filepath: str,
+        begin: int,
+        filesize_bytes: int,
+        encryption: Optional[Encryption] = None,
+    ) -> bytes:
+        #
+        # Let's say, a chunk contains items from [5,9] index.
+        # And the index of the item we want to load is 7.
+        # begin = 5
+        # index = 7
+        #
+        # The chunk's binary format is structured as follows:
+        #
+        # +------------+---------------+-------------+
+        # | num_items  | offset_array  | item_data   |
+        # +------------+---------------+-------------+
+        # | uint32     | uint32[N+1]   | bytes       |
+        # | 4 bytes    | 4*(N+1) bytes | variable    |
+        # +------------+---------------+-------------+
+        #
+        # To get to the offset index of the item we want to load, we need to jumpy by:
+        #       => 1 + (index - begin) # 1 is added since first 4 bytes store `num_items` (1 uint32)
+        #       => 1 + (7 - 5) = 3
+        #       => 3 * 4 = 12          # each takes 4 bytes
+        #       => offset = 12
+        #
+        offset = (1 + (index - begin) if index >= begin else index + 1) * 4
+
+        if chunk_filepath != self._chunk_filepath:
+            start_time = time()
+            exists = chunk_index in self._data
+
+            while not exists:
+                sleep(0.1)
+                exists = os.path.exists(chunk_filepath) and os.stat(chunk_filepath).st_size >= filesize_bytes
+
+                if (time() - start_time) > _MAX_WAIT_TIME:
+                    raise FileNotFoundError(f"The {chunk_filepath} hasn't been found.")
+
+            self._chunk_filepath = chunk_filepath
+
+        data = self._load_data(self._open_handle, offset)
+        return self.deserialize(data)
+
+    def _load_data(self, offset: int) -> bytes:
+        """Load the data from the file buffer."""
+        # Refer to `writer.py::_create_chunk` for more details on the chunk's binary format
+        # We want to read the `offset_start` and `offset_end` for the item we want to load
+        # 2 uint32 (4 bytes each) => 8 bytes; are read to get the offset_start and offset_end
+        pair = self._data[offset : offset + 8]
+        begin, end = np.frombuffer(pair, np.uint32)
+
+        return self._data[begin:end]  # read the item
 
 
 class TokensLoader(BaseItemLoader):

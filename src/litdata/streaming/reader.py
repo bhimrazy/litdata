@@ -24,7 +24,13 @@ from filelock import FileLock, Timeout
 from litdata.constants import _DEBUG
 from litdata.debugger import _get_log_msg
 from litdata.streaming.config import ChunksConfig, Interval
-from litdata.streaming.item_loader import BaseItemLoader, ParquetLoader, PyTreeLoader, TokensLoader
+from litdata.streaming.item_loader import (
+    BaseItemLoader,
+    InMemoryPyTreeLoader,
+    ParquetLoader,
+    PyTreeLoader,
+    TokensLoader,
+)
 from litdata.streaming.sampler import ChunkedIndex
 from litdata.streaming.serializers import Serializer, _get_serializers
 from litdata.utilities.encryption import Encryption
@@ -55,6 +61,7 @@ class PrepareChunksThread(Thread):
         max_cache_size: Optional[int] = None,
         max_pre_download: int = 2,
         rank: Optional[int] = None,
+        in_memory: bool = False,
     ) -> None:
         super().__init__(daemon=True)
         self._config = config
@@ -74,6 +81,7 @@ class PrepareChunksThread(Thread):
         self._force_download_queue: Queue = Queue()
 
         self._rank = rank
+        self._in_memory = in_memory
 
         # Check whether a dataset slice fits on the node
         num_bytes_per_nodes = self._config.num_bytes // self._distributed_env.num_nodes
@@ -232,15 +240,19 @@ class PrepareChunksThread(Thread):
                     return
 
                 if chunk_index is not None:
-                    self._config.download_chunk_from_index(chunk_index)
+                    if not self._in_memory:
+                        self._config.download_chunk_from_index(chunk_index)
 
-                    # Preload item if possible to gain some time but only
-                    # if this is one of the pre-downloaded chunk
-                    if self._pre_download_counter > 0:
-                        self._pre_load_chunk(chunk_index)
+                        # Preload item if possible to gain some time but only
+                        # if this is one of the pre-downloaded chunk
+                        if self._pre_download_counter > 0:
+                            self._pre_load_chunk(chunk_index)
 
-                    # Avoid downloading too many chunks in advance at the risk of over using the disk space
-                    self._pre_download_counter += 1
+                        # Avoid downloading too many chunks in advance at the risk of over using the disk space
+                        self._pre_download_counter += 1
+                    else:
+                        chunk_data = self._config.download_chunk_bytes_from_index(chunk_index)
+                        self._item_loader.pre_load_chunk(chunk_index, chunk_data)
 
             if self._max_cache_size:
                 self._maybe_delete_chunks()
@@ -305,6 +317,7 @@ class BinaryReader:
         self._config: Optional[ChunksConfig] = None
         self._prepare_thread: Optional[PrepareChunksThread] = None
         self._item_loader = item_loader or PyTreeLoader()
+        self._in_memory = isinstance(self._item_loader, InMemoryPyTreeLoader)
         self._last_chunk_index: Optional[int] = None
         self._chunks_queued_for_download = False
         self._max_cache_size = int(os.getenv("MAX_CACHE_SIZE", max_cache_size or 0))
@@ -375,6 +388,7 @@ class BinaryReader:
                     self._max_cache_size,
                     self._max_pre_download,
                     self._rank,
+                    self._in_memory,
                 )
                 # Attach the force download queue
                 self._item_loader._force_download_queue = self._prepare_thread._force_download_queue  # type: ignore

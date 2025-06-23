@@ -11,6 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 import logging
 import os
 from collections import defaultdict
@@ -150,6 +151,15 @@ class ChunksConfig:
         self._downloader.download_chunk_from_index(chunk_index)
 
         self.try_decompress(local_chunkpath)
+
+    def download_chunk_bytes_from_index(self, chunk_index: int) -> bytes:
+        assert self._chunks is not None
+        if self._downloader is None:
+            return None
+
+        file_obj = io.BytesIO()
+        self._downloader.download_chunk_from_index_to_fileobj(chunk_index, file_obj)
+        return file_obj.getvalue()
 
     def try_decompress(self, local_chunkpath: str) -> None:
         if self._compressor is None:
