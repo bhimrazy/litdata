@@ -3,6 +3,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 from collections import OrderedDict
 from types import ModuleType
 from unittest.mock import Mock
@@ -132,32 +133,68 @@ def lightning_sdk_mock(monkeypatch):
     return lightning_sdk
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _thread_police():
-    """Attempts stopping left-over threads to avoid test interactions.
+# Allow-list for threads that are safe to ignore.
+# This is a single, simple set for easy maintenance.
+# Add names or patterns of threads from third-party libs, debuggers, etc.
+SAFE_THREAD_PATTERNS = {
+    "MainThread",
+    "SockThread",  # For pytest-xdist
+    "_pydevd_",  # For debuggers (PyCharm, VSCode)
+    "ThreadPoolExecutor-",  # For concurrent.futures
+    "IPythonHistorySavingThread",  # For Jupyter/IPython environments
+}
 
-    Adapted from PyTorch Lightning.
 
+@pytest.fixture(autouse=True)
+def _thread_policed(request):
+    """Ensure tests shut down all their threads to maintain isolation.
+
+    This fixture detects and fails any test that leaks running, non-daemon
+    threads, which can cause instability and interfere with other tests.
     """
     active_threads_before = set(threading.enumerate())
     yield
     active_threads_after = set(threading.enumerate())
 
-    for thread in active_threads_after - active_threads_before:
-        if isinstance(thread, PrepareChunksThread):
-            thread.force_stop()
+    # Allow a brief moment for threads to shut down cleanly on their own
+    time.sleep(0.1)
+
+    zombie_threads = active_threads_after - active_threads_before
+
+    if not zombie_threads:
+        return
+
+    still_alive_threads = []
+    for thread in zombie_threads:
+        # Ignore threads that are already dead or are on our allow-list.
+        if not thread.is_alive() or any(p in thread.name for p in SAFE_THREAD_PATTERNS):
             continue
 
-        stop = getattr(thread, "stop", None) or getattr(thread, "exit", None)
-        if thread.daemon and callable(stop):
-            # A daemon thread would anyway be stopped at the end of a program
-            # We do it preemptively here to reduce the risk of interactions with other tests that run after
-            stop()
-            assert not thread.is_alive()
-        elif thread.name == "QueueFeederThread":
-            thread.join(timeout=20)
-        else:
-            raise AssertionError(f"Test left zombie thread: {thread}")
+        # Attempt a graceful shutdown if the thread supports it.
+        # This relies on a convention where threads have a `stop()` method.
+        stop_method = getattr(thread, "stop", None) or getattr(thread, "exit", None)
+        if callable(stop_method):
+            try:
+                stop_method()
+                # Wait for the thread to terminate. A timeout is crucial to
+                # prevent the test suite from hanging.
+                thread.join(timeout=5)
+            except Exception as e:
+                pytest.fail(f"Test '{request.node.name}' failed while trying to stop leaked thread {thread.name}: {e}")
+
+        # If a non-daemon thread is still alive after cleanup attempts,
+        # it's a serious issue that will likely hang the process.
+        if thread.is_alive() and not thread.daemon:
+            still_alive_threads.append(thread)
+
+    if still_alive_threads:
+        thread_names = [t.name for t in still_alive_threads]
+        pytest.fail(
+            f"Test '{request.node.name}' leaked the following running threads: {thread_names}. "
+            "Leaked threads can cause instability and interfere with other tests. "
+            "Please ensure that all threads started in a test are properly terminated "
+            "before the test exits."
+        )
 
 
 # ==== fixtures for parquet ====
