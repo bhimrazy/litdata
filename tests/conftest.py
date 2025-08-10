@@ -14,7 +14,6 @@ import torch.distributed
 from litdata import CombinedStreamingDataset, StreamingDataset
 from litdata.constants import _POLARS_AVAILABLE
 from litdata.streaming.cache import Cache
-from litdata.streaming.reader import PrepareChunksThread
 from litdata.utilities.dataset_utilities import get_default_cache_dir
 
 
