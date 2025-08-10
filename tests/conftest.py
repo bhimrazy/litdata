@@ -165,8 +165,10 @@ def _thread_policed(request):
 
     still_alive_threads = []
     for thread in zombie_threads:
+        thread_name = getattr(thread, "name", "<unnamed>")
+
         # Ignore threads that are already dead or are on our allow-list.
-        if not thread.is_alive() or any(p in thread.name for p in SAFE_THREAD_PATTERNS):
+        if not thread.is_alive() or any(p in thread_name for p in SAFE_THREAD_PATTERNS):
             continue
 
         # Attempt a graceful shutdown if the thread supports it.
@@ -179,7 +181,7 @@ def _thread_policed(request):
                 # prevent the test suite from hanging.
                 thread.join(timeout=5)
             except Exception as e:
-                pytest.fail(f"Test '{request.node.name}' failed while trying to stop leaked thread {thread.name}: {e}")
+                pytest.fail(f"Test '{request.node.name}' failed while trying to stop leaked thread {thread_name}: {e}")
 
         # If a non-daemon thread is still alive after cleanup attempts,
         # it's a serious issue that will likely hang the process.
@@ -187,7 +189,7 @@ def _thread_policed(request):
             still_alive_threads.append(thread)
 
     if still_alive_threads:
-        thread_names = [t.name for t in still_alive_threads]
+        thread_names = [getattr(t, "name", "<unnamed>") for t in still_alive_threads]
         pytest.fail(
             f"Test '{request.node.name}' leaked the following running threads: {thread_names}. "
             "Leaked threads can cause instability and interfere with other tests. "
