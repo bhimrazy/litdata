@@ -15,7 +15,6 @@ import contextlib
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 from abc import ABC
 from contextlib import suppress
@@ -26,7 +25,6 @@ from filelock import FileLock, Timeout
 
 from litdata.constants import (
     _AZURE_STORAGE_AVAILABLE,
-    _DISABLE_S5CMD,
     _GOOGLE_STORAGE_AVAILABLE,
     _HF_HUB_AVAILABLE,
     _INDEX_FILENAME,
