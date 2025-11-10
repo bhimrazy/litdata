@@ -23,8 +23,8 @@ jobs:
         exclude:
           - { os: "windows-2022", python-version: "3.13" }
           - { os: "windows-2022", python-version: "3.14" }
-          # Python 3.14 on ubuntu-latest has NumPy compatibility issues
-          # - { os: "ubuntu-latest", python-version: "3.14" }
+          # Python 3.14 on ubuntu-latest has NumPy import issues
+          - { os: "ubuntu-latest", python-version: "3.14" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 60
