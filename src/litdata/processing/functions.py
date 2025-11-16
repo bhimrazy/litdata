@@ -388,7 +388,7 @@ def optimize(
     fn: Callable[[Any], Any],
     inputs: Sequence[Any] | StreamingDataLoader | None = None,
     output_dir: str = "optimized_data",
-    queue: mp.Queue | None = None,
+    queue: "mp.Queue | None" = None,
     input_dir: str | None = None,
     weights: list[int] | None = None,
     chunk_size: int | None = None,

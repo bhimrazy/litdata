@@ -53,7 +53,7 @@ class BaseItemLoader(ABC):
         chunks: list,
         serializers: dict[str, Serializer],
         region_of_interest: list[tuple[int, int]] | None = None,
-        force_download_queue: Queue | None = None,
+        force_download_queue: "Queue | None" = None,
     ) -> None:
         self._config = config
         self._chunks = chunks

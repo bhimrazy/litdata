@@ -482,7 +482,7 @@ class BaseWorker:
         item_loader: BaseItemLoader | None = None,
         storage_options: dict[str, Any] = {},
         keep_data_ordered: bool = True,
-        shared_queue: Queue | FakeQueue | None = None,
+        shared_queue: "Queue | FakeQueue | None" = None,
         using_queue_optimize: bool = False,  # using queues as inputs for optimize fn
     ) -> None:
         """The BaseWorker is responsible to process the user data."""

@@ -58,7 +58,7 @@ class BinaryWriter:
         serializers: dict[str, Serializer] | None = None,
         chunk_index: int | None = None,
         item_loader: BaseItemLoader | None = None,
-        msg_queue: Queue | None = None,
+        msg_queue: "Queue | None" = None,
     ):
         """The BinaryWriter enables to chunk dataset into an efficient streaming format for cloud training.
 

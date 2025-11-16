@@ -49,7 +49,7 @@ class Cache:
         storage_options: dict | None = {},
         session_options: dict | None = {},
         max_pre_download: int = 2,
-        msg_queue: Queue | None = None,
+        msg_queue: "Queue | None" = None,
         on_demand_bytes: bool = False,
     ):
         """The Cache enables to optimise dataset format for cloud training. This is done by grouping several elements
