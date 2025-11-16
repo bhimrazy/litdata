@@ -14,9 +14,10 @@
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from torch.utils.data import Dataset
 

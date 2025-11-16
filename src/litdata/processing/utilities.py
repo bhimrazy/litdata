@@ -16,9 +16,10 @@ import json
 import os
 import tempfile
 import urllib
+from collections.abc import Callable
 from contextlib import contextmanager
 from subprocess import DEVNULL, Popen
-from typing import Any, Callable
+from typing import Any
 from urllib import parse
 
 from litdata.constants import _INDEX_FILENAME, _IS_IN_STUDIO, _SUPPORTED_PROVIDERS

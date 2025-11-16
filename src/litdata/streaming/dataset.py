@@ -13,8 +13,9 @@
 
 import logging
 import os
+from collections.abc import Callable
 from time import time
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import numpy as np
 from torch.utils.data import IterableDataset

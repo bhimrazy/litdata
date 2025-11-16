@@ -15,10 +15,11 @@ import asyncio
 import inspect
 import logging
 import os
+from collections.abc import Callable
 from copy import deepcopy
 from importlib import reload
 from itertools import cycle
-from typing import Any, Callable
+from typing import Any
 
 import torch
 from torch.utils.data import Dataset, IterableDataset
