@@ -22,7 +22,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from multiprocessing.queues import Queue
 from pathlib import Path
 from types import FunctionType
 from typing import TYPE_CHECKING, Any, Literal, Union
@@ -389,7 +388,7 @@ def optimize(
     fn: Callable[[Any], Any],
     inputs: Sequence[Any] | StreamingDataLoader | None = None,
     output_dir: str = "optimized_data",
-    queue: Queue | None = None,
+    queue: mp.Queue | None = None,
     input_dir: str | None = None,
     weights: list[int] | None = None,
     chunk_size: int | None = None,

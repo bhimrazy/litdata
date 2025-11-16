@@ -26,8 +26,7 @@ import traceback
 from abc import abstractmethod
 from contextlib import suppress
 from dataclasses import dataclass
-from multiprocessing import Process
-from multiprocessing.queues import Queue
+from multiprocessing import Process, Queue
 from pathlib import Path
 from queue import Empty
 from time import sleep, time

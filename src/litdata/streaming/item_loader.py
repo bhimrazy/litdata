@@ -18,7 +18,7 @@ from collections import defaultdict, namedtuple
 from copy import deepcopy
 from datetime import datetime
 from io import BytesIO, FileIO
-from multiprocessing.queues import Queue
+from multiprocessing import Queue
 from time import sleep, time
 from typing import Any
 
