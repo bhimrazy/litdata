@@ -16,7 +16,7 @@ import os
 import uuid
 import warnings
 from dataclasses import dataclass
-from multiprocessing import Queue
+from multiprocessing.queues import Queue
 from time import sleep, time
 from typing import Any
 

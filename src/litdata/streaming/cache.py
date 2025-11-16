@@ -13,7 +13,7 @@
 
 import logging
 import os
-from multiprocessing import Queue
+from multiprocessing.queues import Queue
 from typing import Any
 
 from litdata.constants import (
