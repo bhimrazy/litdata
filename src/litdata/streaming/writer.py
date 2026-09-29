@@ -928,7 +928,7 @@ class BinaryWriter:
 def index_parquet_dataset(
     pq_dir_url: str,
     cache_dir: str | None = None,
-    storage_options: dict | None = {},
+    storage_options: dict | None = None,
     num_workers: int = 4,
 ) -> None:
     """Index a Parquet dataset from a specified URL.

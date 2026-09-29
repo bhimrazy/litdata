@@ -309,8 +309,8 @@ class S3Client:
     def __init__(
         self,
         refetch_interval: int = _DEFAULT_REFETCH_INTERVAL,
-        storage_options: dict | None = {},
-        session_options: dict | None = {},
+        storage_options: dict | None = None,
+        session_options: dict | None = None,
     ) -> None:
         self._refetch_interval = refetch_interval
         self._last_time: float | None = None

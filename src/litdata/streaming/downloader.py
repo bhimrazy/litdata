@@ -384,7 +384,7 @@ class Downloader(ABC):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         self._remote_dir = remote_dir
@@ -548,7 +548,7 @@ class S3Downloader(Downloader):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         super().__init__(remote_dir, cache_dir, chunks, storage_options)
@@ -680,7 +680,7 @@ class R2Downloader(Downloader):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         super().__init__(remote_dir, cache_dir, chunks, storage_options)
@@ -823,7 +823,7 @@ class GCPDownloader(Downloader):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         if not _GOOGLE_STORAGE_AVAILABLE:
@@ -961,7 +961,7 @@ class AzureDownloader(Downloader):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         if not _AZURE_STORAGE_AVAILABLE:
@@ -1127,7 +1127,7 @@ class HFDownloader(Downloader):
         remote_dir: str,
         cache_dir: str,
         chunks: list[dict[str, Any]],
-        storage_options: dict | None = {},
+        storage_options: dict | None = None,
         **kwargs: Any,
     ):
         if not _HF_HUB_AVAILABLE:
@@ -1226,8 +1226,8 @@ def get_downloader(
     remote_dir: str,
     cache_dir: str,
     chunks: list[dict[str, Any]],
-    storage_options: dict | None = {},
-    session_options: dict | None = {},
+    storage_options: dict | None = None,
+    session_options: dict | None = None,
 ) -> Downloader:
     """Get the appropriate downloader instance based on the remote directory prefix.
 
@@ -1235,8 +1235,8 @@ def get_downloader(
         remote_dir (str): The remote directory URL.
         cache_dir (str): The local cache directory.
         chunks (List[Dict[str, Any]]): List of chunks to managed by the downloader.
-        storage_options (Optional[Dict], optional): Additional storage options. Defaults to {}.
-        session_options (Optional[Dict], optional): Additional S3 session options. Defaults to {}.
+        storage_options (Optional[Dict], optional): Additional storage options. Defaults to None.
+        session_options (Optional[Dict], optional): Additional S3 session options. Defaults to None.
 
     Returns:
         Downloader: An instance of the appropriate downloader class.

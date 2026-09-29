@@ -1765,7 +1765,7 @@ class ParquetLoader(BaseItemLoader):
             )
 
         self._remote_dir: str | None = None
-        self._storage_options: dict | None = {}
+        self._storage_options: dict | None = None
 
     def setup(
         self,
