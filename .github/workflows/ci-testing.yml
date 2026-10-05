@@ -64,6 +64,9 @@ jobs:
       UV_TORCH_BACKEND: "cpu"
       # Supply-chain guard: skip PyPI releases newer than this. See https://docs.astral.sh/uv/reference/settings/#exclude-newer
       UV_EXCLUDE_NEWER: "2 days"
+      # macOS 26: the image's framework Pythons (python.org / Homebrew) take ~35s per `<host>.local` lookup,
+      # which stalls torch.distributed (gloo) init past the test timeout; use uv's standalone builds instead.
+      UV_PYTHON_PREFERENCE: ${{ startsWith(matrix.os, 'macos') && 'only-managed' || 'managed' }}
 
     steps:
       # FFmpeg is required for Video Deserializer tests
