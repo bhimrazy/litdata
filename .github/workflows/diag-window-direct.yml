@@ -1,0 +1,33 @@
+name: Diag window-direct runner leak
+
+# Temporary diagnostic workflow (fork only). Not intended for upstream.
+on:
+  push:
+    branches: ["diag/**"]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_TORCH_BACKEND: "cpu"
+      UV_EXCLUDE_NEWER: "2 days"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv pip install -e ".[extras]" -r requirements/test.txt "torch==2.14.*" -U -q
+      - name: Unfixed module alone (expect zombie-thread ERROR)
+        continue-on-error: true
+        run: pytest tests/streaming/test_window_direct_unfixed.py -p no:randomly -v
+      - name: Fixed module alone (expect pass)
+        run: pytest tests/streaming/test_window_direct.py -p no:randomly -v
+      - name: Fixed module after temporal/posix window tests on one worker (expect pass)
+        run: pytest tests/streaming/test_temporal_array_example.py tests/streaming/test_window_posix.py tests/streaming/test_window_direct.py -p no:randomly -q
