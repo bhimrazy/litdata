@@ -11,6 +11,19 @@ from litdata.streaming import Cache
 pytestmark = pytest.mark.skipif(os.name != "posix" or platform.system() != "Linux", reason="Linux NFS direct mode")
 
 
+@pytest.fixture(autouse=True)
+def shutdown_cloud_runner():
+    # Direct-I/O windows bypass POSIX-fast, so `read_window` starts the process-wide
+    # `litdata-raw-aio` loop thread; stop it so the session `_thread_police` doesn't flag it.
+    yield
+    from litdata.raw import dataset as raw_dataset
+
+    runner = raw_dataset._RUNNER
+    raw_dataset._shutdown_runner_before_fork()
+    if runner is not None:
+        runner._executor.shutdown(wait=True, cancel_futures=True)
+
+
 def test_direct_dataset_disables_mmap_and_ordinary_iteration(tmp_path, monkeypatch):
     monkeypatch.setenv("LITDATA_POSIX_FAST", "1")
     monkeypatch.setattr("litdata.utilities.direct_io._check_nfs", lambda fd: None)
