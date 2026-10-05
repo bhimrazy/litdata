@@ -26,3 +26,15 @@ for name in [h, "localhost"]:
             print(f"  {ip} bind+connect OK {time.time() - t:.2f}s", flush=True)
         except Exception as e:
             print(f"  {ip} FAILED {time.time() - t:.2f}s: {type(e).__name__} {e}", flush=True)
+
+for label, fn in [
+    ("getfqdn()", socket.getfqdn),
+    ("gethostbyname(hostname)", lambda: socket.gethostbyname(h)),
+    ("gethostbyaddr(127.0.0.1)", lambda: socket.gethostbyaddr("127.0.0.1")),
+]:
+    t = time.time()
+    try:
+        r = fn()
+        print(f"{label} -> {r} in {time.time() - t:.2f}s", flush=True)
+    except Exception as e:
+        print(f"{label} FAILED in {time.time() - t:.2f}s: {e}", flush=True)

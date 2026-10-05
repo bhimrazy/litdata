@@ -11,7 +11,7 @@ defaults:
 
 jobs:
   diag:
-    name: diag (${{ matrix.os }}, ${{ matrix.python-version }})
+    name: diag (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.managed && ', uv-managed' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -19,11 +19,14 @@ jobs:
       matrix:
         os: ["macos-26"]
         python-version: ["3.10", "3.11", "3.14"]
+        managed: [false]
         include:
-          - { os: "macos-14", python-version: "3.11" }
+          - { os: "macos-14", python-version: "3.11", managed: false }
+          - { os: "macos-26", python-version: "3.11", managed: true }
     env:
       UV_TORCH_BACKEND: "cpu"
       UV_EXCLUDE_NEWER: "2 days"
+      UV_PYTHON_PREFERENCE: ${{ matrix.managed && 'only-managed' || 'managed' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -43,15 +46,15 @@ jobs:
           cat /etc/hosts; ifconfig | grep -E "^[a-z]|inet " || true
       - name: Hostname resolution and sockets
         continue-on-error: true
-        run: timeout 120 python diag/net.py
+        run: perl -e 'alarm 120; exec @ARGV' python diag/net.py
       - name: Gloo minimal (default)
         continue-on-error: true
-        run: timeout 120 python diag/gloo.py
+        run: diag/spy.sh 75 python diag/gloo.py
       - name: Gloo minimal (GLOO_SOCKET_IFNAME=lo0)
         continue-on-error: true
         env:
           GLOO_SOCKET_IFNAME: lo0
-        run: timeout 120 python diag/gloo.py
+        run: diag/spy.sh 75 python diag/gloo.py
       - name: Instrumented test (default)
         continue-on-error: true
         run: diag/spy.sh 110 python diag/instr.py
@@ -62,4 +65,9 @@ jobs:
         run: diag/spy.sh 110 python diag/instr.py
       - name: pytest target (default)
         continue-on-error: true
+        run: pytest tests/streaming/test_cache.py -k distributed --timeout=120 --capture=no -v --durations=0
+      - name: pytest target (GLOO_SOCKET_IFNAME=lo0)
+        continue-on-error: true
+        env:
+          GLOO_SOCKET_IFNAME: lo0
         run: pytest tests/streaming/test_cache.py -k distributed --timeout=120 --capture=no -v --durations=0

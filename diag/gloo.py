@@ -8,9 +8,9 @@ import torch.multiprocessing as mp
 
 
 def run(rank):
-    faulthandler.dump_traceback_later(60, exit=True)
+    faulthandler.dump_traceback_later(15, repeat=True)
     t = time.time()
-    dist.init_process_group("gloo", init_method="tcp://127.0.0.1:29533", rank=rank, world_size=2)
+    dist.init_process_group("gloo", init_method=os.environ.get("INIT", "tcp://127.0.0.1:29533"), rank=rank, world_size=2)
     print(f"rank{rank} init {time.time() - t:.2f}s", flush=True)
     t = time.time()
     dist.barrier()
@@ -20,6 +20,7 @@ def run(rank):
     dist.all_reduce(x)
     print(f"rank{rank} all_reduce={x.item()} {time.time() - t:.2f}s", flush=True)
     dist.destroy_process_group()
+    faulthandler.cancel_dump_traceback_later()
 
 
 if __name__ == "__main__":
