@@ -1,0 +1,65 @@
+name: Diag macOS 26 gloo hang
+
+# Temporary diagnostic workflow (fork only). Not intended for upstream.
+on:
+  push:
+    branches: ["diag/**"]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  diag:
+    name: diag (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["macos-26"]
+        python-version: ["3.10", "3.11", "3.14"]
+        include:
+          - { os: "macos-14", python-version: "3.11" }
+    env:
+      UV_TORCH_BACKEND: "cpu"
+      UV_EXCLUDE_NEWER: "2 days"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install
+        run: |
+          uv pip install -e ".[extras]" -r requirements/test.txt "torch==2.14.*" py-spy -U -q
+          python -c "import sys, torch; print(sys.executable, sys.version, torch.__version__)"
+          ls -l "$(python -c 'import sys; print(sys._base_executable)')"
+          python -c "import sys, sysconfig; print('framework:', sysconfig.get_config_var('PYTHONFRAMEWORK'))"
+      - name: Host info
+        run: |
+          sw_vers; hostname; scutil --get LocalHostName || true; scutil --get HostName || true
+          cat /etc/hosts; ifconfig | grep -E "^[a-z]|inet " || true
+      - name: Hostname resolution and sockets
+        continue-on-error: true
+        run: timeout 120 python diag/net.py
+      - name: Gloo minimal (default)
+        continue-on-error: true
+        run: timeout 120 python diag/gloo.py
+      - name: Gloo minimal (GLOO_SOCKET_IFNAME=lo0)
+        continue-on-error: true
+        env:
+          GLOO_SOCKET_IFNAME: lo0
+        run: timeout 120 python diag/gloo.py
+      - name: Instrumented test (default)
+        continue-on-error: true
+        run: diag/spy.sh 110 python diag/instr.py
+      - name: Instrumented test (GLOO_SOCKET_IFNAME=lo0)
+        continue-on-error: true
+        env:
+          GLOO_SOCKET_IFNAME: lo0
+        run: diag/spy.sh 110 python diag/instr.py
+      - name: pytest target (default)
+        continue-on-error: true
+        run: pytest tests/streaming/test_cache.py -k distributed --timeout=120 --capture=no -v --durations=0
